@@ -59,6 +59,13 @@ error = [0, 0, 0, 0, 0, 0]
 prev_error = [0, 0, 0, 0, 0, 0]
 error_sum = [0, 0, 0, 0, 0, 0]
 
+# Box force positions
+forces = [
+    [0, 5, box_dims[2]/2, 0, 0, -5],
+    [0, -5, box_dims[2]/2, 0, 0, 0],
+    [0, 0, -box_dims[2]/2, 0, 0, 0]
+]
+
 def set_up_drawing():
     global last_time, dt
 
@@ -105,8 +112,14 @@ def draw():
     draw_reference_frame()
     fill(139, 69, 19)  # Brown color
     box(box_dims[0], box_dims[1], box_dims[2])
+
+    # Draw the forces
+    for force in forces:
+        draw_force(force)
+
     popMatrix()
 
+    return
     # Draw the goal box
     pushMatrix()
     translate(goal_pos[0], goal_pos[1], goal_pos[2])
@@ -118,6 +131,19 @@ def draw():
     box(goal_dims[0], goal_dims[1], goal_dims[2])
     popMatrix()
 
+def draw_force(force):
+    pushMatrix()
+    translate(force[0], force[1], force[2])
+    fill(255, 0, 0)  # Red color
+    sphere(0.5)
+
+    # Draw the force vector
+    stroke(255, 0, 0)
+    line(0, 0, 0, -force[3], -force[4], -force[5])
+
+    popMatrix()
+
+# Dynamics
 def update_box():
     global box_vel, box_pos, box_avel, box_rot, box_accel, box_aaccel, dt, box_mass, box_force, box_torque, box_moment
 
@@ -133,6 +159,27 @@ def update_box():
         box_aaccel[i] = box_torque[i] / box_moment[i]
         box_avel[i] += box_aaccel[i] * dt
         box_rot[i] += box_avel[i] * dt
+
+def compute_net_force():
+    global box_force, box_torque, forces
+    net_force = [0, 0, 0]
+    net_torque = [0, 0, 0]
+    for f in forces:
+        # f[0:3] = position about where the force is applied
+        # f[3:6] = force vector
+        
+        # Sum net force
+        net_force[0] += f[3]
+        net_force[1] += f[4]
+        net_force[2] += f[5]
+        
+        # Calculate r x F (cross product) for net torque
+        net_torque[0] += f[1] * f[5] - f[2] * f[4]
+        net_torque[1] += f[2] * f[3] - f[0] * f[5]
+        net_torque[2] += f[0] * f[4] - f[1] * f[3]
+        
+    box_force = net_force
+    box_torque = net_torque
 
 # User input handling
 def control():
@@ -151,19 +198,21 @@ def control():
         goal_rot[1] += ((-goal_avel if key == CODED and keyCode == UP else goal_avel if key == CODED and keyCode == DOWN else 0) * dt)
         goal_rot[2] += ((-goal_avel if key == ',' else goal_avel if key == '.' else 0) * dt)
 
+    # Compute net forces
+    compute_net_force()
+
     # If g is pressed call PID()
     # if keyPressed and key == 'g':
-    if True:
-        PID()
-    else:
-        # set forces to 0
-        box_force = [0, 0, 0]
-        box_torque = [0, 0, 0]
+    #     PID()
+    # else:
+    #     # set forces to 0
+    #     box_force = [0, 0, 0]
+    #     box_torque = [0, 0, 0]
 
-        # Reset PID
-        error = [0, 0, 0, 0, 0, 0]
-        prev_error = [0, 0, 0, 0, 0, 0]
-        error_sum = [0, 0, 0, 0, 0, 0]
+    #     # Reset PID
+    #     error = [0, 0, 0, 0, 0, 0]
+    #     prev_error = [0, 0, 0, 0, 0, 0]
+    #     error_sum = [0, 0, 0, 0, 0, 0]
 
 def PID():
     global error, prev_error, error_sum, box_force, box_torque, box_pos, goal_pos, box_rot, goal_rot, dt
