@@ -1,0 +1,151 @@
+# Drawing setup
+angleX = 0
+angleY = 0
+zoom = 10.0
+axis_length = 10
+
+# Kinematics
+selected_link = 0
+links = [
+    {"r": 0, "alpha": -PI/2, "d": 0, "theta": 0, "type": 0},
+    {"r": 15, "alpha": 0, "d": 0, "theta": -PI/4, "type": 0},
+    {"r": 15, "alpha": 0, "d": 0, "theta": PI/2, "type": 0},
+]
+
+# Main Processing functions
+def setup():
+    size(600, 600, P3D)
+
+def draw():
+    set_up_drawing()
+    control()
+    
+    # Draw first node
+    draw_node(0, selected_link == 0)
+    
+    # Draw nodes and links
+    for i in range(len(links)-1):
+        link = links[i]
+        apply_transformations(link)
+        draw_node(links[i+1]["type"], i == selected_link-1)
+    
+    # Draw end effector
+    link = links[len(links)-1]
+    apply_transformations(link)
+    draw_node(2)
+
+# Helper drawing functions
+def draw_cylinder(radius, height, sides=24):
+    strokeWeight(0)
+    angle = TWO_PI / sides
+    half_height = height / 2
+
+    # Draw the top and bottom circles
+    beginShape(TRIANGLE_FAN)
+    vertex(0, 0, half_height)
+    for i in range(sides + 1):
+        x = cos(i * angle) * radius
+        y = sin(i * angle) * radius
+        vertex(x, y, half_height)
+    endShape()
+
+    beginShape(TRIANGLE_FAN)
+    vertex(0, 0, -half_height)
+    for i in range(sides + 1):
+        x = cos(i * angle) * radius
+        y = sin(i * angle) * radius
+        vertex(x, y, -half_height)
+    endShape()
+
+    # Draw the side surface
+    beginShape(QUAD_STRIP)
+    for i in range(sides + 1):
+        x = cos(i * angle) * radius
+        y = sin(i * angle) * radius
+        vertex(x, y, half_height)
+        vertex(x, y, -half_height)
+    endShape()
+
+def draw_node(type=0, highlight=False):
+    # Draw axes
+    strokeWeight(0.2 if highlight else 0.1)
+    stroke(255, 0, 0) # x
+    line(0,0,0, axis_length,0,0)
+    stroke(0, 255, 0) # y
+    line(0,0,0, 0,axis_length,0)
+    stroke(0, 0, 255) # z
+    line(0,0,0, 0,0,axis_length)
+
+    # Draw a prism facing Z
+    stroke(0, 0, 0)
+
+    # Choose color
+    fill(128, 128, 128)
+    if highlight:
+        fill(255, 255, 0)
+    elif type == 2:
+        fill(154, 205, 50)
+    
+    # Draw the node based on the type
+    scale = 0.5
+    if type == 0:
+        draw_cylinder(1 * scale, 4 * scale)
+    elif type == 1:
+        box(2 * scale, 2 * scale, 3 * scale)
+    elif type == 2:
+        strokeWeight(0)
+        sphere(2 * scale)
+
+def set_up_drawing():
+    global angleX, angleY
+    background(255)
+    
+    # Set up origin
+    translate(width/2, height/2, 0)
+
+    # Apply zoom
+    scale(zoom)
+    
+    # Rotate based on mouse drags
+    rotateX(angleX)
+    rotateY(angleY)
+    rotateX(PI/2)
+
+# Forwards kinematics
+def control():
+    global selected_link
+    speed = 0.025
+    # If a digit key is pressed, update the selected link.
+    if keyPressed and str(key).isdigit():
+        idx = int(key)
+        if idx < len(links):
+            selected_link = idx
+    if not links[selected_link]["type"]:
+        if keyPressed and key == 'a':
+            links[selected_link]["theta"] -= speed
+        if keyPressed and key == 'd':
+            links[selected_link]["theta"] += speed
+    else:
+        if keyPressed and key == 'a':
+            links[selected_link]["d"] -= speed*2
+        if keyPressed and key == 'd':
+            links[selected_link]["d"] += speed*2
+
+def apply_transformations(link):
+    theta = link["theta"]
+    d = link["d"]
+    r = link["r"]
+    alpha = link["alpha"]
+    
+    rotateZ(theta)
+    translate(0, 0, d)
+    translate(r, 0, 0)
+    rotateX(alpha)
+
+# Camera control
+def mouseDragged():
+    global angleX, angleY
+    # Update rotation angles based on the change in mouse position.
+    # Adjust the sensitivity by multiplying with a small factor (e.g., 0.01).
+    angleY += (mouseX - pmouseX) * 0.01
+    angleX -= (mouseY - pmouseY) * 0.01
