@@ -47,12 +47,12 @@ goal_vel = 20
 goal_avel = PI/2
 
 # PID control for positions
-Kpp = 2
+Kpp = 0.15
 Kip = 0.3
-Kdp = 4
+Kdp = 15
 Kpr = 0.5
 Kir = 1
-Kdr = 5
+Kdr = 15
 error = [0, 0, 0, 0, 0, 0]
 prev_error = [0, 0, 0, 0, 0, 0]
 error_sum = [0, 0, 0, 0, 0, 0]
@@ -324,10 +324,10 @@ def mat_vec_mult(mat, vec):
     return result
 
 # User input handling
-def control():
+def control_desired():
     global box_force, box_torque, box_vel, box_avel, dt, error, prev_error, error_sum, goal_pos, goal_vel, goal_avel, goal_rot
-    force_mag = 1    # magnitude of translational force
-    torque_mag = 2  # magnitude of torque
+    force_mag = 10    # magnitude of translational force
+    torque_mag = 10  # magnitude of torque
 
     desired_net_force = [0, 0, 0]
     desired_net_torque = [0, 0, 0]
@@ -374,28 +374,47 @@ def control():
         " Warning: Diff too high!" if force_diff_norm > force_threshold or torque_diff_norm > torque_threshold else ""
     ))
 
-    # If g is pressed call PID()
-    # if keyPressed and key == 'g':
-    #     PID()
-    # else:
-    #     # set forces to 0
-    #     box_force = [0, 0, 0]
-    #     box_torque = [0, 0, 0]
+def control():
+    global box_force, box_torque, box_vel, box_avel, dt, error, prev_error, error_sum, goal_pos, goal_vel, goal_avel, goal_rot
+    force_mag = 1    # magnitude of translational force
+    torque_mag = 2  # magnitude of torque
 
-    #     # Reset PID
-    #     error = [0, 0, 0, 0, 0, 0]
-    #     prev_error = [0, 0, 0, 0, 0, 0]
-    #     error_sum = [0, 0, 0, 0, 0, 0]
+    desired_net_force = [0, 0, 0]
+    desired_net_torque = [0, 0, 0]
+    if keyPressed:
+        # move the goal based on keyboard input
+        goal_pos[0] += (goal_vel if key == 's' else -goal_vel if key == 'w' else 0) * dt
+        goal_pos[1] += (goal_vel if key == 'a' else -goal_vel if key == 'd' else 0) * dt
+        goal_pos[2] += (goal_vel if key == 'z' else -goal_vel if key == 'x' else 0) * dt
+
+        # Rotate the goal based on keyboard input
+        goal_rot[0] += ((-goal_avel if key == CODED and keyCode == LEFT else goal_avel if key == CODED and keyCode == RIGHT else 0) * dt)
+        goal_rot[1] += ((-goal_avel if key == CODED and keyCode == UP else goal_avel if key == CODED and keyCode == DOWN else 0) * dt)
+        goal_rot[2] += ((-goal_avel if key == ',' else goal_avel if key == '.' else 0) * dt)
+
+    # If g is pressed call PID()
+    if keyPressed and key == 'g':
+        desired_net_force, desired_net_torque = PID()
+    else:
+        # Reset PID
+        error = [0, 0, 0, 0, 0, 0]
+        prev_error = [0, 0, 0, 0, 0, 0]
+        error_sum = [0, 0, 0, 0, 0, 0]
+    compute_necessary_forces(desired_net_force, desired_net_torque)
+    compute_net_force()
 
 def PID():
-    global error, prev_error, error_sum, box_force, box_torque, box_pos, goal_pos, box_rot, goal_rot, dt
+    global error, prev_error, error_sum, box_pos, goal_pos, box_rot, goal_rot, dt
+    pid_force = [0, 0, 0]
+    pid_torque = [0, 0, 0]
+
     # Update PID for translation (indices 0,1,2)
     for i in range(3):
         error[i] = goal_pos[i] - box_pos[i]
         error_sum[i] += error[i] * dt
         derivative = (error[i] - prev_error[i]) / dt if dt != 0 else 0
         output = Kpp * error[i] + Kip * error_sum[i] + Kdp * derivative
-        box_force[i] = output
+        pid_force[i] = output
         prev_error[i] = error[i]
 
     # Update PID for rotation (indices 3,4,5)
@@ -406,8 +425,10 @@ def PID():
         derivative = (error[i+3] - prev_error[i+3]) / dt if dt != 0 else 0
         # Scale the PID output by the moment of inertia on that axis
         output = (Kpr * error[i+3] + Kir * error_sum[i+3] + Kdr * derivative) * box_moment[i]
-        box_torque[i] = output
+        pid_torque[i] = output
         prev_error[i+3] = error[i+3]
+
+    return pid_force, pid_torque
 
 def mouseDragged():
     global angleX, angleY

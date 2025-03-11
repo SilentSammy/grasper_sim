@@ -160,7 +160,7 @@ box_pos = [15, 0, 0]
 box_dims = [8, 16, 4]
 box_rot = [0, 0, 0]
 
-# Goal positions around the box
+# For the top surface:
 top_goal1 = [0, 5, box_dims[2]/2 + shape_scale]  # for arm1
 top_goal2 = [0, -5, box_dims[2]/2 + shape_scale]  # for arm2
 bottom_goal = [0, 0, -box_dims[2]/2 - shape_scale]  # for arm3
@@ -229,7 +229,7 @@ def draw():
         arm.goal = local_goal
         arm.move_to_goal()
         arm.draw()
-        arm.draw_goal()
+        # arm.draw_goal()
         popMatrix()
 
 # Control

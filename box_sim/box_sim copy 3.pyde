@@ -5,7 +5,7 @@ class Box:
         self.box_dims = [8, 16, 4]
         self.box_rot = [0, 0, 0]  # [rotation about X, Y, Z]
         self.box_mass = 1
-        self.box_moment = Box.compute_box_moment(self.box_mass, self.box_dims)
+        self.box_moment = compute_box_moment(self.box_mass, self.box_dims)
         self.box_vel = [0, 0, 0]
         self.box_accel = [0, 0, 0]  # The box will accelerate along the global Y axis
         self.box_force = [0, 0, 1]
@@ -23,7 +23,7 @@ class Box:
         # PID control for positions
         self.Kpp = 0.15
         self.Kip = 0.3
-        self.Kdp = 8
+        self.Kdp = 15
         self.Kpr = 0.5
         self.Kir = 1
         self.Kdr = 15
@@ -40,33 +40,17 @@ class Box:
 
     # Dynamics
     def update_box_dynamics(self):
-        self.update_net_force()
-        self.update_acceleration()
-        self.update_velocity()
-        self.update_position()
-
-    def update_acceleration(self):
-        # Update translational acceleration: a = F / m
+        # Update translational dynamics: a = F / m
         for i in range(3):
             self.box_accel[i] = self.box_force[i] / self.box_mass
-        # Update rotational acceleration: α = torque / moment of inertia
-        for i in range(3):
-            self.box_aaccel[i] = self.box_torque[i] / self.box_moment[i]
-
-    def update_velocity(self):
-        # Update translational velocity: v = v + a * dt
-        for i in range(3):
             self.box_vel[i] += self.box_accel[i] * dt
-        # Update rotational velocity: ω = ω + α * dt
-        for i in range(3):
-            self.box_avel[i] += self.box_aaccel[i] * dt
-
-    def update_position(self):
-        # Update translational position: x = x + v * dt
-        for i in range(3):
             self.box_pos[i] += self.box_vel[i] * dt
-        # Update rotational position: θ = θ + ω * dt
+
+        # Update rotational dynamics: α = torque / moment of inertia
         for i in range(3):
+            # Compute angular acceleration along each axis
+            self.box_aaccel[i] = self.box_torque[i] / self.box_moment[i]
+            self.box_avel[i] += self.box_aaccel[i] * dt
             self.box_rot[i] += self.box_avel[i] * dt
 
     def draw_box(self):
@@ -79,7 +63,7 @@ class Box:
         draw_reference_frame()
         # Draw the forces
         for force in self.forces:
-            self.draw_force(force)
+            draw_force(force)
         fill(139, 69, 19)
         box(self.box_dims[0], self.box_dims[1], self.box_dims[2])
         popMatrix()
@@ -128,9 +112,9 @@ class Box:
         desired_net_force_local = mat_vec_mult(R_T, desired_net_force)
         desired_net_torque_local = mat_vec_mult(R_T, desired_net_torque)
 
-        self.forces[0][3:6] = [0, 0, -25]
-        self.forces[1][3:6] = [0, 0, -25]
-        self.forces[2][3:6] = [0, 0, 50]
+        self.forces[0][3:6] = [0, 0, -100]
+        self.forces[1][3:6] = [0, 0, -100]
+        self.forces[2][3:6] = [0, 0, 200]
 
         # For the Y component, we'll apply 0.25 to both of the top thrusters, and 0.5 to the bottom thruster.
         self.forces[0][4] += 0.25 * desired_net_force_local[1]
@@ -217,35 +201,9 @@ class Box:
 
         return pid_force, pid_torque
 
-    def stop_thrust(self):
-        for force in self.forces:
-            force[3:6] = [0, 0, 0]
-
     def thrust_to_goal(self):
         desired_net_force, desired_net_torque = self.PID()
         self.set_necessary_forces(desired_net_force, desired_net_torque)
-
-    @staticmethod    
-    def compute_box_moment(mass, dims):
-        # dims: [width, height, depth]
-        w, h, d = dims[0], dims[1], dims[2]
-        I_x = (1/12.0) * mass * (h*h + d*d)
-        I_y = (1/12.0) * mass * (w*w + d*d)
-        I_z = (1/12.0) * mass * (w*w + h*h)
-        return [I_x, I_y, I_z]
-
-    @staticmethod
-    def draw_force(force, force_scalar = 0.25):
-        pushMatrix()
-        translate(force[0], force[1], force[2])
-        fill(255, 0, 0)  # Red color
-        sphere(0.25)
-
-        # Draw the force vector
-        stroke(255, 140, 0)  # Dark orange color
-        line(0, 0, 0, -force[3] * force_scalar, -force[4] * force_scalar, -force[5] * force_scalar)
-
-        popMatrix()
 
 # Drawer functions
 def draw_reference_frame():
@@ -257,6 +215,18 @@ def draw_reference_frame():
     stroke(0, 0, 255)  # z-axis (blue)
     line(0, 0, 0, 0, 0, axis_length)
     stroke(0)
+
+def draw_force(force, force_scalar = 1):
+    pushMatrix()
+    translate(force[0], force[1], force[2])
+    fill(255, 0, 0)  # Red color
+    sphere(0.25)
+
+    # Draw the force vector
+    stroke(255, 140, 0)  # Dark orange color
+    line(0, 0, 0, -force[3] * force_scalar, -force[4] * force_scalar, -force[5] * force_scalar)
+
+    popMatrix()
 
 # Helpers
 def transpose(mat):
@@ -326,9 +296,17 @@ def mat_vec_mult(mat, vec):
         result[i] = s
     return result
 
+def compute_box_moment(mass, dims):
+    # dims: [width, height, depth]
+    w, h, d = dims[0], dims[1], dims[2]
+    I_x = (1/12.0) * mass * (h*h + d*d)
+    I_y = (1/12.0) * mass * (w*w + d*d)
+    I_z = (1/12.0) * mass * (w*w + h*h)
+    return [I_x, I_y, I_z]
+
 # Global drawing parameters
-dt = 0 # REQUIRED FOR BOX AND MANIPULATOR CLASSES
 last_time = 0
+dt = 1  # Time step for dynamics
 axis_length = 10
 shape_scale = 2
 zoom = 10.0
@@ -372,16 +350,21 @@ def setup():
 
 def draw():
     set_up_drawing()
+    # control()  # Control box rotation via keys, if desired
     
-    control()  # Handle user input (goal position and rotation)
-    box_obj.thrust_to_goal()  # Apply PID control to reach the goal
-    box_obj.update_box_dynamics()  # Update force, accel, vel and pos, both linear and angular
-    box_obj.draw_box() # Draw the box
+    box_obj.update_box_dynamics()  # Update dynamics: velocity and position
+    
+    # Draw the box
+    box_obj.draw_box()
 
 # User input handling
 def control():
-    goal_vel = 10
-    goal_avel = PI/2
+    global box_force, box_torque, box_vel, box_avel, dt, error, prev_error, error_sum, goal_pos, goal_vel, goal_avel, goal_rot
+    force_mag = 1    # magnitude of translational force
+    torque_mag = 2  # magnitude of torque
+
+    desired_net_force = [0, 0, 0]
+    desired_net_torque = [0, 0, 0]
     if keyPressed:
         # move the goal based on keyboard input
         box_obj.goal_pos[0] += (goal_vel if key == 's' else -goal_vel if key == 'w' else 0) * dt
@@ -392,6 +375,18 @@ def control():
         box_obj.goal_rot[0] += ((-goal_avel if key == CODED and keyCode == LEFT else goal_avel if key == CODED and keyCode == RIGHT else 0) * dt)
         box_obj.goal_rot[1] += ((-goal_avel if key == CODED and keyCode == UP else goal_avel if key == CODED and keyCode == DOWN else 0) * dt)
         box_obj.goal_rot[2] += ((-goal_avel if key == ',' else goal_avel if key == '.' else 0) * dt)
+
+    # If g is pressed call PID()
+    # if keyPressed and key == 'g':
+    if True:
+        desired_net_force, desired_net_torque = PID()
+    else:
+        # Reset PID
+        error = [0, 0, 0, 0, 0, 0]
+        prev_error = [0, 0, 0, 0, 0, 0]
+        error_sum = [0, 0, 0, 0, 0, 0]
+    compute_necessary_forces(desired_net_force, desired_net_torque)
+    compute_net_force()
 
 def mouseDragged():
     global angleX, angleY
