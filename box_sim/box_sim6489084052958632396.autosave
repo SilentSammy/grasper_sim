@@ -10,7 +10,7 @@ def compute_box_moment(mass, dims):
 def draw_reference_frame():
     # Draws the axes to visualize the coordinate system
     stroke(255, 0, 0)  # x-axis (red)
-    line(0, 0, 0, axis_length, 0, 0)
+    line(0, 0, 0, axis_length, 0, 0),
     stroke(0, 255, 0)  # y-axis (green)
     line(0, 0, 0, 0, axis_length, 0)
     stroke(0, 0, 255)  # z-axis (blue)
@@ -114,7 +114,7 @@ def draw():
         draw_force(force)
 
     fill(139, 69, 19)  # Brown color with 50% transparency
-    box(box_dims[0], box_dims[1], box_dims[2])
+    # box(box_dims[0], box_dims[1], box_dims[2])
 
     popMatrix()
 
@@ -130,7 +130,7 @@ def draw():
     box(goal_dims[0], goal_dims[1], goal_dims[2])
     popMatrix()
 
-def draw_force(force, force_scalar = 5):
+def draw_force(force):
     pushMatrix()
     translate(force[0], force[1], force[2])
     fill(255, 0, 0)  # Red color
@@ -138,7 +138,7 @@ def draw_force(force, force_scalar = 5):
 
     # Draw the force vector
     stroke(255, 140, 0)  # Dark orange color
-    line(0, 0, 0, -force[3] * force_scalar, -force[4] * force_scalar, -force[5] * force_scalar)
+    line(0, 0, 0, -force[3], -force[4], -force[5])
 
     popMatrix()
 
@@ -187,74 +187,42 @@ def compute_net_force():
     box_torque = global_net_torque
 
 def compute_necessary_forces(desired_net_force, desired_net_torque):
-    # Convert desired force and torque from global frame to local frame:
-    R = rotation_matrix(box_rot[0], box_rot[1], box_rot[2])
-    R_T = transpose(R)  # since R is orthonormal, its transpose is its inverse.
-    desired_net_force_local = mat_vec_mult(R_T, desired_net_force)
-    desired_net_torque_local = mat_vec_mult(R_T, desired_net_torque)
-
     forces[0][3:6] = [0, 0, 0]
     forces[1][3:6] = [0, 0, 0]
     forces[2][3:6] = [0, 0, 0]
 
     # For the Y component, we'll apply 0.25 to both of the top thrusters, and 0.5 to the bottom thruster.
-    forces[0][4] += 0.25 * desired_net_force_local[1]
-    forces[1][4] += 0.25 * desired_net_force_local[1]
-    forces[2][4] += 0.5 * desired_net_force_local[1]
+    forces[0][4] += 0.25 * desired_net_force[1]
+    forces[1][4] += 0.25 * desired_net_force[1]
+    forces[2][4] += 0.5 * desired_net_force[1]
 
     # Same for the X component: 0.25 to both top thrusters, 0.5 to the bottom thruster.
-    forces[0][3] += 0.25 * desired_net_force_local[0]
-    forces[1][3] += 0.25 * desired_net_force_local[0]
-    forces[2][3] += 0.5 * desired_net_force_local[0]
+    forces[0][3] += 0.25 * desired_net_force[0]
+    forces[1][3] += 0.25 * desired_net_force[0]
+    forces[2][3] += 0.5 * desired_net_force[0]
 
     # For the Z component, apply the full force to the bottom thruster if it's positive (pushing up), and distribute evenly to the top thrusters if it's negative (pushing down).
-    if desired_net_force_local[2] > 0:
-        forces[2][5] += desired_net_force_local[2]
+    if desired_net_force[2] > 0:
+        forces[2][5] += desired_net_force[2]
     else:
-        forces[0][5] += desired_net_force_local[2] * 0.5
-        forces[1][5] += desired_net_force_local[2] * 0.5
+        forces[0][5] += desired_net_force[2] * 0.5
+        forces[1][5] += desired_net_force[2] * 0.5
     
     # For torque it's trickier. We need to consider the distance from the center of mass to the thrusters.
-    # Let's start with Z. We only need to use top two thrusters.
-    #   r = abs(forces[0][1]) (and similarly for forces[1][1]).
-    r = abs(forces[0][1])
-    if r != 0:
-        F_torque = -desired_net_torque_local[2] / (2.0 * r)
+    leverArm = abs(forces[0][1])
+    if leverArm != 0:
+        # For thruster 0, adding F_torque in +X contributes a torque of -leverArm*F_torque.
+        # For thruster 1, subtracting F_torque in X contributes -leverArm*(-F_torque) = -leverArm*F_torque.
+        # So the total torque about Z is -2 * leverArm * F_torque.
+        # To produce the desired torque (desired_net_torque[2]), solve:
+        #   -2 * leverArm * F_torque = desired_net_torque[2]
+        # which gives:
+        F_torque = -desired_net_torque[2] / (2 * leverArm)
     else:
         F_torque = 0
-    # Apply the differential X force to generate torque:
-    forces[0][3] += F_torque  # adds force in +X at Y = +r
-    forces[1][3] -= F_torque  # subtracts force in +X at Y = -r
 
-    # --- Torque allocation for rotation about Y (pitch) ---
-    # Use the difference in Z positions.
-    z_top = forces[0][2]  # assuming both top thrusters have the same z coordinate.
-    if z_top != 0:
-        # Extra force for each top thruster:
-        F_torque_top = desired_net_torque_local[1] / (4.0 * z_top)
-        # And for the bottom thruster:
-        F_torque_bottom = -2.0 * F_torque_top
-    else:
-        F_torque_top = 0
-        F_torque_bottom = 0
-
-    # Add the differential X forces for rotation about Y.
-    forces[0][3] += F_torque_top
-    forces[1][3] += F_torque_top
-    forces[2][3] += F_torque_bottom
-
-    # --- Torque allocation for rotation about X (roll) ---
-    if z_top != 0:
-        F_torque_top_x = -desired_net_torque_local[0] / (4.0 * z_top)
-        F_torque_bot_x = -2.0 * F_torque_top_x  # equals desired_net_torque_local[0] / (2.0 * z_top)
-    else:
-        F_torque_top_x = 0
-        F_torque_bot_x = 0
-
-    # Apply the extra Y forces for rotation about X:
-    forces[0][4] += F_torque_top_x
-    forces[1][4] += F_torque_top_x
-    forces[2][4] += F_torque_bot_x
+    forces[0][3] += F_torque
+    forces[1][3] -= F_torque
 
 # Helpers
 def transpose(mat):
