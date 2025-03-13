@@ -9,6 +9,7 @@ def compute_box_moment(mass, dims):
 
 def draw_reference_frame():
     # Draws the axes to visualize the coordinate system
+    strokeWeight(0.1)
     stroke(255, 0, 0)  # x-axis (red)
     line(0, 0, 0, axis_length, 0, 0)
     stroke(0, 255, 0)  # y-axis (green)
@@ -124,13 +125,14 @@ def draw():
     rotateZ(goal_rot[2])
     rotateY(goal_rot[1])
     rotateX(goal_rot[0])
-    draw_reference_frame()
+    # draw_reference_frame()
     fill(0, 255, 0, 127)  # Green color with 50% transparency
-    box(goal_dims[0], goal_dims[1], goal_dims[2])
+    # box(goal_dims[0], goal_dims[1], goal_dims[2])
     popMatrix()
 
 def draw_force(force, force_scalar = 5):
     pushMatrix()
+    strokeWeight(0.2)
     translate(force[0], force[1], force[2])
     fill(255, 0, 0)  # Red color
     sphere(0.25)
@@ -326,8 +328,8 @@ def mat_vec_mult(mat, vec):
 # User input handling
 def control():
     global box_force, box_torque, box_vel, box_avel, dt, error, prev_error, error_sum, goal_pos, goal_vel, goal_avel, goal_rot
-    force_mag = 1    # magnitude of translational force
-    torque_mag = 2  # magnitude of torque
+    force_mag = 10    # magnitude of translational force
+    torque_mag = 10  # magnitude of torque
 
     desired_net_force = [0, 0, 0]
     desired_net_torque = [0, 0, 0]
