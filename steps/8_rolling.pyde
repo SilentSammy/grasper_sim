@@ -58,7 +58,7 @@ class Manipulator:
         if highlight:
             fill(255, 255, 0)
         elif type == 2:
-            fill(154, 205, 50, 127)  # Lime green with 50% transparency
+            fill(154, 205, 50)  # Lime green with 50% transparency
         
         # Draw the node based on the type
         if type == 0:
@@ -389,31 +389,6 @@ class Box:
         popMatrix()
 
     # Control
-    @staticmethod
-    def sqrt(n, tolerance=1e-10):
-        if n < 0:
-            raise ValueError("No se puede calcular la raíz cuadrada de un número negativo.")
-        if n == 0:
-            return 0.0
-        guess = n
-        while True:
-            new_guess = (guess + n / guess) / 2.0
-            if abs(new_guess - guess) < tolerance:
-                return new_guess
-            guess = new_guess
-    @staticmethod
-    def distance_3d(object_center, finger_position):
-        x1, y1, z1 = object_center
-        x2, y2, z2 = finger_position
-        
-        dx = x2 - x1
-        dy = y2 - y1
-        dz = z2 - z1
-        
-        square_distance = dx * dx + dy * dy + dz * dz
-        return Box.sqrt(square_distance)
-
-    # Control
     def set_necessary_forces(self, desired_net_force, desired_net_torque):
         # Convert desired force and torque from global frame to local frame:
         R = rotation_matrix(self.box_rot[0], self.box_rot[1], self.box_rot[2])
@@ -421,43 +396,30 @@ class Box:
         desired_net_force_local = mat_vec_mult(R_T, desired_net_force)
         desired_net_torque_local = mat_vec_mult(R_T, desired_net_torque)
 
-        object_center =[0, 0, 0]
-        finger1_start = [0, 4, self.box_dims[2]/2]
-        finger2_start = [0, -6, self.box_dims[2]/2]
-        finger3_start = [0, 0, -self.box_dims[2]/2]
-        
-        sub_ratio1 =((self.forces[0][0]+self.forces[0][1]+self.forces[0][2])*0.3)/(finger1_start[0]+finger1_start[1]+finger1_start[2])
-        sub_ratio2 =((self.forces[1][0]+self.forces[1][1]+self.forces[1][2])*0.2)/(finger2_start[0]+finger2_start[1]+finger2_start[2])
-        sub_ratio3 =((self.forces[2][0]+self.forces[2][1]+self.forces[2][2])*0.5)/(finger3_start[0]+finger3_start[1]+finger3_start[2])
-        
-        ratio1 = ((Box.distance_3d(object_center, self.forces[0][0:3]))*sub_ratio1)/Box.distance_3d(object_center, finger1_start)
-        ratio2 = ((Box.distance_3d(object_center, self.forces[1][0:3]))*sub_ratio2)/Box.distance_3d(object_center, finger2_start)
-        ratio3 = ((Box.distance_3d(object_center, self.forces[2][0:3]))*sub_ratio3)/Box.distance_3d(object_center, finger3_start)
-        
-        self.forces[0][3:6] = [0, 0, ratio1 * -10]
-        self.forces[1][3:6] = [0, 0, ratio2 * -10]
-        self.forces[2][3:6] = [0, 0, ratio3 * 10]
+        self.forces[0][3:6] = [0, 0, -25]
+        self.forces[1][3:6] = [0, 0, -25]
+        self.forces[2][3:6] = [0, 0, 50]
 
         # For the Y component, we'll apply 0.25 to both of the top thrusters, and 0.5 to the bottom thruster.
-        self.forces[0][4] += ratio1 * desired_net_force_local[1]
-        self.forces[1][4] += ratio2 * desired_net_force_local[1]
-        self.forces[2][4] += ratio3 * desired_net_force_local[1]
+        self.forces[0][4] += 0.25 * desired_net_force_local[1]
+        self.forces[1][4] += 0.25 * desired_net_force_local[1]
+        self.forces[2][4] += 0.5 * desired_net_force_local[1]
 
         # Same for the X component: 0.25 to both top thrusters, 0.5 to the bottom thruster.
-        self.forces[0][3] += ratio1 * desired_net_force_local[0]
-        self.forces[1][3] += ratio2 * desired_net_force_local[0]
-        self.forces[2][3] += ratio3 * desired_net_force_local[0]
+        self.forces[0][3] += 0.25 * desired_net_force_local[0]
+        self.forces[1][3] += 0.25 * desired_net_force_local[0]
+        self.forces[2][3] += 0.5 * desired_net_force_local[0]
 
         # For the Z component, apply the full force to the bottom thruster if it's positive (pushing up), and distribute evenly to the top thrusters if it's negative (pushing down).
         if desired_net_force_local[2] > 0:
             self.forces[2][5] += desired_net_force_local[2]
         else:
-            self.forces[0][5] += desired_net_force_local[2] * ratio3
-            self.forces[1][5] += desired_net_force_local[2] * ratio3
+            self.forces[0][5] += desired_net_force_local[2] * 0.5
+            self.forces[1][5] += desired_net_force_local[2] * 0.5
         
         # For torque it's trickier. We need to consider the distance from the center of mass to the thrusters.
         # Let's start with Z. We only need to use top two thrusters.
-        # r = abs(self.forces[0][1]) (and similarly for self.forces[1][1]).
+        #   r = abs(self.forces[0][1]) (and similarly for self.forces[1][1]).
         r = abs(self.forces[0][1])
         if r != 0:
             F_torque = -desired_net_torque_local[2] / (2.0 * r)
@@ -496,7 +458,7 @@ class Box:
         self.forces[0][4] += F_torque_top_x
         self.forces[1][4] += F_torque_top_x
         self.forces[2][4] += F_torque_bot_x
-    
+
     def PID(self):
         pid_force = [0, 0, 0]
         pid_torque = [0, 0, 0]
@@ -588,28 +550,15 @@ angleY = 0
 end_effector_radius = 2
 box_obj = Box([10, 0, 0], [0, 0, 0])
 contact_points = [
-    [0, 4, box_obj.box_dims[2]/2 + end_effector_radius],
-    [0, -8, box_obj.box_dims[2]/2 + end_effector_radius],
-    [0, 0, -box_obj.box_dims[2]/2 - end_effector_radius],
+    [0, 0, box_obj.box_dims[2]/2 + end_effector_radius],
 ]
-
 arms = [
-    Manipulator([0, 10, 10], [0, 0, 0], end_effector_radius),
-    Manipulator([0, -10, 10], [0, 0, 0], end_effector_radius),
-    Manipulator([0, 0, -10], [PI, 0, 0], end_effector_radius),
+    Manipulator(pos = [0, 0, 10], rot = [0, 0, 0], end_effector_radius=end_effector_radius),
 ]
 ghost_arms = [Manipulator(m.pos, m.rot, 0) for m in arms]
 start_angle = [None for _ in ghost_arms]
 
 # Main functions
-def record_starting_conditions():
-    # Record the starting angles of the ghost arms
-    for i, ghost_arm in enumerate(ghost_arms):
-        ghost_arm.global_goal = box_obj.local_to_global_box(contact_points[i])
-        ghost_arm.move_to_goal()
-        angles = get_line_angles_relative_to_box_axes(ghost_arm, box_obj)
-        start_angle[i] = angles
-
 def set_up_drawing():
     global last_time, dt
 
@@ -642,7 +591,7 @@ def set_up_drawing():
 
 def setup():
     global zoom, start_angle
-
+    
     # Option 1
     # fullScreen(P3D)
     # zoom = 20.0
@@ -651,33 +600,31 @@ def setup():
     size(800, 800, P3D)
     zoom = 12.5
 
-    record_starting_conditions()
+    for i, ghost_arm in enumerate(ghost_arms):
+        ghost_arm.global_goal = box_obj.local_to_global_box(contact_points[i])
+        ghost_arm.move_to_goal()
+        angles = get_line_angles_relative_to_box_axes(ghost_arm, box_obj)
+        start_angle[i] = angles
 
 def draw():
     global start_angle
     set_up_drawing()
-    
+
+    control()  # Handle user input (goal position and rotation)
+    box_obj.draw_box(False) # Draw the box
+
     # Set up arms
     for i, arm in enumerate(arms):
         pushMatrix()
-        contact_point = set_rolled_contact_point(i)
-        # arm.global_goal = contact_point
+        contact_point = get_rolled_contact_point(i)
+        arm.global_goal = contact_point
         arm.move_to_goal()
-        popMatrix()
-
-    # Handle user input (goal position and rotation)
-    control()
-    
-    # Draw the box
-    box_obj.draw_box(True)
-
-    # Draw the arms
-    for arm in arms:
         arm.draw()
+        popMatrix()
 
 # Control
 def control():
-    control_force()
+    control_box()
 
 def control_box():
     box_speed = 10
@@ -789,23 +736,20 @@ def draw_reference_frame():
     stroke(0)
 
 # Math
-def set_rolled_contact_point(arm_index):
-    contact_point = contact_points[arm_index][:]
+def get_rolled_contact_point(i):
+    contact_point = contact_points[i][:]
     global_goal = box_obj.local_to_global_box(contact_point)
-    ghost_arms[arm_index].global_goal = global_goal
-    ghost_arms[arm_index].move_to_goal()
+    ghost_arms[i].global_goal = global_goal
+    ghost_arms[i].move_to_goal()
     # ghost_arms[i].draw()
 
-    angleX, angleY = get_line_angles_relative_to_box_axes(ghost_arms[arm_index], box_obj)
-    print(degrees(angleX), degrees(angleY))
+    angleX, angleY = get_line_angles_relative_to_box_axes(ghost_arms[i], box_obj)
 
-    contact_point[0] -= (-1 if arms[arm_index].pos[2] < 0 else 1) * (start_angle[arm_index][0] - angleX) * arms[arm_index].end_effector_radius
-    contact_point[1] -= (-1 if arms[arm_index].pos[2] < 0 else 1) * (start_angle[arm_index][1] - angleY) * arms[arm_index].end_effector_radius
+    contact_point[0] -= (start_angle[i][0] - angleX) * arms[i].end_effector_radius
+    contact_point[1] -= (start_angle[i][1] - angleY) * arms[i].end_effector_radius
 
     global_goal = box_obj.local_to_global_box(contact_point)
-    arms[arm_index].global_goal = global_goal
-
-    box_obj.forces[arm_index][0:2] = [contact_point[0], contact_point[1]]
+    return global_goal
 
 def get_line_angles_relative_to_box_axes(arm, box):
     # Get the end effector’s global line direction (its local X axis) using the provided arm.
@@ -836,6 +780,83 @@ def get_line_angles_relative_to_box_axes(arm, box):
     angle_rel_y = acos(dot_y)
     
     return angle_rel_x, angle_rel_y
+
+def angle_between_line_and_plane():
+    # Get the end-effector transformation.
+    eff_transform = arms[0].get_end_effector_transform()
+    # The end-effector’s local X axis is (1,0,0).
+    # In global coordinates, that becomes the first column of the transformation.
+    line_global = [eff_transform.m00, eff_transform.m10, eff_transform.m20]
+
+    # Get the box’s transformation.
+    box_transform = box_obj.get_box_transform()
+    # The box's plane was drawn from a box() that represents the XY plane,
+    # so its normal in local coordinates is (0,0,1).
+    # Its global normal is the third column of box_transform.
+    plane_normal_global = [box_transform.m02, box_transform.m12, box_transform.m22]
+
+    # Function to normalize a vector.
+    def normalize(v):
+        mag = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
+        return [v[0]/mag, v[1]/mag, v[2]/mag] if mag != 0 else v
+
+    line_norm = normalize(line_global)
+    normal_norm = normalize(plane_normal_global)
+
+    # Dot the two unit vectors.
+    dot_val = line_norm[0] * normal_norm[0] + line_norm[1] * normal_norm[1] + line_norm[2] * normal_norm[2]
+    # Clamp the dot value to the valid range.
+    dot_val = max(-1, min(1, dot_val))
+    
+    # Angle (theta) between line and plane's normal in radians.
+    theta = acos(dot_val)
+    
+    # The angle between the line and the plane is complementary: 
+    # angle_line_plane = |PI/2 - theta|
+    angle_line_plane = abs(PI/2 - theta)
+    
+    return angle_line_plane  # In radians
+
+def get_line_angles_wrt_plane():
+    # Get the end-effector’s global line direction.
+    eff_transform = arms[0].get_end_effector_transform()
+    # (The end-effector’s local X axis is (1,0,0); get its global equivalent.)
+    line_global = [eff_transform.m00, eff_transform.m10, eff_transform.m20]
+    
+    # Normalize the line direction.
+    def normalize(v):
+        mag = sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
+        return [v[0]/mag, v[1]/mag, v[2]/mag] if mag != 0 else v
+    line_global = normalize(line_global)
+
+    # Get the box's transformation and extract the plane's axes.
+    box_transform = box_obj.get_box_transform()
+    # The plane’s normal (local Z) is the third column.
+    plane_normal = normalize([box_transform.m02, box_transform.m12, box_transform.m22])
+    # The plane’s local X is the first column.
+    plane_x = normalize([box_transform.m00, box_transform.m10, box_transform.m20])
+    # The plane’s local Y is the second column.
+    plane_y = normalize([box_transform.m01, box_transform.m11, box_transform.m21])
+    
+    # Project the line direction onto the plane: remove the normal component.
+    dot_ln = line_global[0]*plane_normal[0] + line_global[1]*plane_normal[1] + line_global[2]*plane_normal[2]
+    proj = [line_global[i] - dot_ln * plane_normal[i] for i in range(3)]
+    proj = normalize(proj)
+    
+    # Now express the projected vector in the plane’s coordinate system.
+    # Compute its scalar components along the plane’s X and Y axes.
+    comp_x = proj[0]*plane_x[0] + proj[1]*plane_x[1] + proj[2]*plane_x[2]
+    comp_y = proj[0]*plane_y[0] + proj[1]*plane_y[1] + proj[2]*plane_y[2]
+    
+    # Compute the signed angle between the projected vector and plane's X axis.
+    # This gives you one angle; the deviation along Y is implicit.
+    theta = atan2(comp_y, comp_x)
+    
+    # Also get the individual “deviation” angles (absolute angles between proj and axis).
+    angle_wrt_x = acos(max(-1, min(1, comp_x)))  # in [0, PI]
+    angle_wrt_y = acos(max(-1, min(1, comp_y)))
+    
+    return theta, angle_wrt_x, angle_wrt_y  # all in radians
 
 def transpose(mat):
     # Transpose a 3x3 matrix.

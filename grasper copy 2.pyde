@@ -42,8 +42,8 @@ class Manipulator:
         pushMatrix()
         strokeWeight(0)
         fill(255, 0, 0, 100)
-        translate(self.local_goal[0], self.local_goal[1], self.local_goal[2])
-        sphere(1.25 * shape_scale)
+        translate(self.global_goal[0], self.global_goal[1], self.global_goal[2])
+        sphere(1.25 * Manipulator.shape_scale)
         popMatrix()
 
     def draw_node(self, type=0, highlight=False, draw_axes=False):
@@ -103,6 +103,11 @@ class Manipulator:
             popMatrix()
 
     # Kinematics
+    def get_end_effector_global_position(self):
+        transform = self.get_end_effector_transform()
+        pos = [transform.m03 + self.pos[0], transform.m13 + self.pos[1], transform.m23 + self.pos[2]]
+        return pos
+    
     def get_end_effector_transform(self):
         # Initialize the transformation matrix as an identity matrix
         transform = PMatrix3D()
@@ -371,7 +376,7 @@ class Box:
         rotateX(self.goal_rot[0])
         draw_reference_frame()
         fill(0, 255, 0, 127)  # Green color with 50% transparency
-        # box(self.goal_dims[0], self.goal_dims[1], self.goal_dims[2])
+        box(self.goal_dims[0], self.goal_dims[1], self.goal_dims[2])
         popMatrix()
 
     @staticmethod
@@ -389,19 +394,6 @@ class Box:
         popMatrix()
 
     # Control
-    @staticmethod
-    def sqrt(n, tolerance=1e-10):
-        if n < 0:
-            raise ValueError("No se puede calcular la raíz cuadrada de un número negativo.")
-        if n == 0:
-            return 0.0
-        guess = n
-        while True:
-            new_guess = (guess + n / guess) / 2.0
-            if abs(new_guess - guess) < tolerance:
-                return new_guess
-            guess = new_guess
-    @staticmethod
     def distance_3d(object_center, finger_position):
         x1, y1, z1 = object_center
         x2, y2, z2 = finger_position
@@ -413,8 +405,7 @@ class Box:
         square_distance = dx * dx + dy * dy + dz * dz
         return Box.sqrt(square_distance)
 
-    # Control
-    def set_necessary_forces(self, desired_net_force, desired_net_torque):
+    def set_necessary_forces2(self, desired_net_force, desired_net_torque):
         # Convert desired force and torque from global frame to local frame:
         R = rotation_matrix(self.box_rot[0], self.box_rot[1], self.box_rot[2])
         R_T = transpose(R)  # since R is orthonormal, its transpose is its inverse.
@@ -497,6 +488,76 @@ class Box:
         self.forces[1][4] += F_torque_top_x
         self.forces[2][4] += F_torque_bot_x
     
+    def set_necessary_forces(self, desired_net_force, desired_net_torque):
+        # Convert desired force and torque from global frame to local frame:
+        R = rotation_matrix(self.box_rot[0], self.box_rot[1], self.box_rot[2])
+        R_T = transpose(R)  # since R is orthonormal, its transpose is its inverse.
+        desired_net_force_local = mat_vec_mult(R_T, desired_net_force)
+        desired_net_torque_local = mat_vec_mult(R_T, desired_net_torque)
+
+        self.forces[0][3:6] = [0, 0, -25]
+        self.forces[1][3:6] = [0, 0, -25]
+        self.forces[2][3:6] = [0, 0, 50]
+
+        # For the Y component, we'll apply 0.25 to both of the top thrusters, and 0.5 to the bottom thruster.
+        self.forces[0][4] += 0.25 * desired_net_force_local[1]
+        self.forces[1][4] += 0.25 * desired_net_force_local[1]
+        self.forces[2][4] += 0.5 * desired_net_force_local[1]
+
+        # Same for the X component: 0.25 to both top thrusters, 0.5 to the bottom thruster.
+        self.forces[0][3] += 0.25 * desired_net_force_local[0]
+        self.forces[1][3] += 0.25 * desired_net_force_local[0]
+        self.forces[2][3] += 0.5 * desired_net_force_local[0]
+
+        # For the Z component, apply the full force to the bottom thruster if it's positive (pushing up), and distribute evenly to the top thrusters if it's negative (pushing down).
+        if desired_net_force_local[2] > 0:
+            self.forces[2][5] += desired_net_force_local[2]
+        else:
+            self.forces[0][5] += desired_net_force_local[2] * 0.5
+            self.forces[1][5] += desired_net_force_local[2] * 0.5
+        
+        # For torque it's trickier. We need to consider the distance from the center of mass to the thrusters.
+        # Let's start with Z. We only need to use top two thrusters.
+        #   r = abs(self.forces[0][1]) (and similarly for self.forces[1][1]).
+        r = abs(self.forces[0][1])
+        if r != 0:
+            F_torque = -desired_net_torque_local[2] / (2.0 * r)
+        else:
+            F_torque = 0
+        # Apply the differential X force to generate torque:
+        self.forces[0][3] += F_torque  # adds force in +X at Y = +r
+        self.forces[1][3] -= F_torque  # subtracts force in +X at Y = -r
+
+        # --- Torque allocation for rotation about Y (pitch) ---
+        # Use the difference in Z positions.
+        z_top = self.forces[0][2]  # assuming both top thrusters have the same z coordinate.
+        if z_top != 0:
+            # Extra force for each top thruster:
+            F_torque_top = desired_net_torque_local[1] / (4.0 * z_top)
+            # And for the bottom thruster:
+            F_torque_bottom = -2.0 * F_torque_top
+        else:
+            F_torque_top = 0
+            F_torque_bottom = 0
+
+        # Add the differential X forces for rotation about Y.
+        self.forces[0][3] += F_torque_top
+        self.forces[1][3] += F_torque_top
+        self.forces[2][3] += F_torque_bottom
+
+        # --- Torque allocation for rotation about X (roll) ---
+        if z_top != 0:
+            F_torque_top_x = -desired_net_torque_local[0] / (4.0 * z_top)
+            F_torque_bot_x = -2.0 * F_torque_top_x  # equals desired_net_torque_local[0] / (2.0 * z_top)
+        else:
+            F_torque_top_x = 0
+            F_torque_bot_x = 0
+
+        # Apply the extra Y forces for rotation about X:
+        self.forces[0][4] += F_torque_top_x
+        self.forces[1][4] += F_torque_top_x
+        self.forces[2][4] += F_torque_bot_x
+
     def PID(self):
         pid_force = [0, 0, 0]
         pid_torque = [0, 0, 0]
@@ -532,6 +593,31 @@ class Box:
         self.set_necessary_forces(desired_net_force, desired_net_torque)
 
     # Helpers
+    @staticmethod
+    def sqrt(n, tolerance=1e-10):
+        if n < 0:
+            raise ValueError("No se puede calcular la raíz cuadrada de un número negativo.")
+        if n == 0:
+            return 0.0
+        guess = n
+        while True:
+            new_guess = (guess + n / guess) / 2.0
+            if abs(new_guess - guess) < tolerance:
+                return new_guess
+            guess = new_guess
+
+    @staticmethod
+    def distance_3d(object_center, finger_position):
+        x1, y1, z1 = object_center
+        x2, y2, z2 = finger_position
+        
+        dx = x2 - x1
+        dy = y2 - y1
+        dz = z2 - z1
+        
+        square_distance = dx * dx + dy * dy + dz * dz
+        return Box.sqrt(square_distance)
+
     def local_to_global_box(self, local_offset):
         # unpack local offset values (assume center of box as origin)
         lx, ly, lz = local_offset[0], local_offset[1], local_offset[2]
@@ -557,6 +643,7 @@ class Box:
         global_y = self.box_pos[1] + y3
         global_z = self.box_pos[2] + z3
         return [global_x, global_y, global_z]
+        # return [x3, y3, z3]
     
     def get_box_transform(self):
         # Create a PMatrix3D representing the box's global transformation.
@@ -585,11 +672,12 @@ angleX = 0
 angleY = 0
 
 # Objects
-end_effector_radius = 2
+contact = 1
+end_effector_radius = 0
 box_obj = Box([10, 0, 0], [0, 0, 0])
 contact_points = [
-    [0, 4, box_obj.box_dims[2]/2 + end_effector_radius],
-    [0, -8, box_obj.box_dims[2]/2 + end_effector_radius],
+    [0, 5, box_obj.box_dims[2]/2 + end_effector_radius],
+    [0, -5, box_obj.box_dims[2]/2 + end_effector_radius],
     [0, 0, -box_obj.box_dims[2]/2 - end_effector_radius],
 ]
 
@@ -600,16 +688,22 @@ arms = [
 ]
 ghost_arms = [Manipulator(m.pos, m.rot, 0) for m in arms]
 start_angle = [None for _ in ghost_arms]
+start_pos = [None for _ in ghost_arms]
 
 # Main functions
 def record_starting_conditions():
+    # Record the end effector positions of the arms
+    for i, arm in enumerate(arms):
+        start_pos[i] = arm.get_end_effector_global_position()
+        print("Arm", i, "start position:", start_pos[i])
+
     # Record the starting angles of the ghost arms
     for i, ghost_arm in enumerate(ghost_arms):
         ghost_arm.global_goal = box_obj.local_to_global_box(contact_points[i])
         ghost_arm.move_to_goal()
         angles = get_line_angles_relative_to_box_axes(ghost_arm, box_obj)
         start_angle[i] = angles
-
+    
 def set_up_drawing():
     global last_time, dt
 
@@ -656,24 +750,34 @@ def setup():
 def draw():
     global start_angle
     set_up_drawing()
-    
-    # Set up arms
-    for i, arm in enumerate(arms):
-        pushMatrix()
-        contact_point = set_rolled_contact_point(i)
-        # arm.global_goal = contact_point
-        arm.move_to_goal()
-        popMatrix()
 
     # Handle user input (goal position and rotation)
     control()
     
+    # Set up arms
+    for i, arm in enumerate(arms):
+        pushMatrix()
+        start = start_pos[i]
+        contact_point = box_obj.local_to_global_box(get_rolled_contact_point(i))
+        # contact_point = contact_points[i]
+        # Extrapolate position using the contact variable via our extrapolate() function.
+        extrapolated_goal = extrapolate_smooth(start, contact_point, contact)
+        arm.global_goal = extrapolated_goal
+
+        box_obj.forces[i][0:2] = [contact_point[0], contact_point[1]]
+
+        arm.move_to_goal()
+        popMatrix()
+    
+    print(box_obj.forces)
+
     # Draw the box
     box_obj.draw_box(True)
 
     # Draw the arms
     for arm in arms:
         arm.draw()
+        # arm.draw_goal()
 
 # Control
 def control():
@@ -707,6 +811,7 @@ def control_goal():
     box_obj.update_box_dynamics()  # Update force, accel, vel and pos, both linear and angular
 
 def generic_control(lin_mag, rot_mag, lin_vals, rot_vals):
+    global contact
     if keyPressed:
         lin_vals[0] += (1 if key == 's' else -1 if key == 'w' else 0) * lin_mag
         lin_vals[1] += (1 if key == 'a' else -1 if key == 'd' else 0) * lin_mag
@@ -715,6 +820,8 @@ def generic_control(lin_mag, rot_mag, lin_vals, rot_vals):
         rot_vals[0] += (-1 if key == CODED and keyCode == LEFT else 1 if key == CODED and keyCode == RIGHT else 0) * rot_mag
         rot_vals[1] += (-1 if key == CODED and keyCode == UP else 1 if key == CODED and keyCode == DOWN else 0) * rot_mag
         rot_vals[2] += (-1 if key == ',' else 1 if key == '.' else 0) * rot_mag
+
+        contact = max(min(contact + (1 if key == 'c' else -1 if key == 'v' else 0) * 2*dt, 1), 0)
 
 def mouseDragged():
     global angleX, angleY
@@ -789,7 +896,16 @@ def draw_reference_frame():
     stroke(0)
 
 # Math
-def set_rolled_contact_point(arm_index):
+def extrapolate_smooth(pointA, pointB, t):
+    # Use a sine easing: when t=0 -> sin(0)=0, when t=1 -> sin(PI/2)=1
+    smooth_t = sin(t * PI/2)
+    return [ pointA[j] + smooth_t * (pointB[j] - pointA[j]) for j in range(len(pointA)) ]
+
+def extrapolate(pointA, pointB, t):
+    # Returns pointA + t * (pointB - pointA)
+    return [ pointA[j] + t * (pointB[j] - pointA[j]) for j in range(len(pointA)) ]
+
+def get_rolled_contact_point(arm_index):
     contact_point = contact_points[arm_index][:]
     global_goal = box_obj.local_to_global_box(contact_point)
     ghost_arms[arm_index].global_goal = global_goal
@@ -802,10 +918,7 @@ def set_rolled_contact_point(arm_index):
     contact_point[0] -= (-1 if arms[arm_index].pos[2] < 0 else 1) * (start_angle[arm_index][0] - angleX) * arms[arm_index].end_effector_radius
     contact_point[1] -= (-1 if arms[arm_index].pos[2] < 0 else 1) * (start_angle[arm_index][1] - angleY) * arms[arm_index].end_effector_radius
 
-    global_goal = box_obj.local_to_global_box(contact_point)
-    arms[arm_index].global_goal = global_goal
-
-    box_obj.forces[arm_index][0:2] = [contact_point[0], contact_point[1]]
+    return contact_point
 
 def get_line_angles_relative_to_box_axes(arm, box):
     # Get the end effector’s global line direction (its local X axis) using the provided arm.

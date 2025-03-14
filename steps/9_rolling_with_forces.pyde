@@ -277,8 +277,8 @@ class Box:
     
         # Box force positions
         self.forces = [
-            [0, 5, self.box_dims[2]/2, 0, 0, 0],
-            [0, -5, self.box_dims[2]/2, 0, 0, 0],
+            [0, 4, self.box_dims[2]/2, 0, 0, 0],
+            [0, -6, self.box_dims[2]/2, 0, 0, 0],
             [0, 0, -self.box_dims[2]/2, 0, 0, 0]
         ]
 
@@ -371,7 +371,7 @@ class Box:
         rotateX(self.goal_rot[0])
         draw_reference_frame()
         fill(0, 255, 0, 127)  # Green color with 50% transparency
-        # box(self.goal_dims[0], self.goal_dims[1], self.goal_dims[2])
+        box(self.goal_dims[0], self.goal_dims[1], self.goal_dims[2])
         popMatrix()
 
     @staticmethod
@@ -589,7 +589,7 @@ end_effector_radius = 2
 box_obj = Box([10, 0, 0], [0, 0, 0])
 contact_points = [
     [0, 4, box_obj.box_dims[2]/2 + end_effector_radius],
-    [0, -8, box_obj.box_dims[2]/2 + end_effector_radius],
+    [0, -6, box_obj.box_dims[2]/2 + end_effector_radius],
     [0, 0, -box_obj.box_dims[2]/2 - end_effector_radius],
 ]
 
@@ -670,6 +670,7 @@ def draw():
     
     # Draw the box
     box_obj.draw_box(True)
+    box_obj.draw_goal()
 
     # Draw the arms
     for arm in arms:
@@ -677,7 +678,7 @@ def draw():
 
 # Control
 def control():
-    control_force()
+    control_goal()
 
 def control_box():
     box_speed = 10
