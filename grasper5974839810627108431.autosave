@@ -9,7 +9,7 @@ class Manipulator:
             {"r": 0, "alpha": -PI/2, "d": 0, "theta": 0, "type": 0},
             {"r": 10, "alpha": 0, "d": 0, "theta": -PI/4, "type": 0},
             {"r": 10, "alpha": 0, "d": 0, "theta": PI/2, "type": 0},
-        ]
+            ]
         self.global_goal = [0, 0, 0] # in global FoR
 
     @property
@@ -300,11 +300,11 @@ class Box:
             [0, 0-y_off, -self.box_dims[2]/2, -2, 0, 0]
         ]
 
-        x_off = 1
-        y_off = 0
+        x_off = 3
+        y_off = 2
         self.forces = [
-            [0+x_off, 5+y_off, self.box_dims[2]/2, -2, 1, 0],
-            [0+x_off, -5+y_off, self.box_dims[2]/2, 2, 1, 0],
+            [0+x_off, 5+y_off, self.box_dims[2]/2, 0, 1, 0],
+            [0+x_off, -5+y_off, self.box_dims[2]/2, 0, 1, 0],
             [0-x_off, 0-y_off, -self.box_dims[2]/2, 0, -2, 0]
         ]
 
@@ -515,126 +515,95 @@ class Box:
         desired_net_force_local = mat_vec_mult(R_T, desired_net_force)
         desired_net_torque_local = mat_vec_mult(R_T, desired_net_torque)
 
-        # Clear current thruster force vectors (indices 3:6)
-        for thruster in self.forces:
-            thruster[3:6] = [0, 0, 0]
+        # Set gripping forces
+        # self.forces[0][3:6] = [0, 0, -25]
+        # self.forces[1][3:6] = [0, 0, -25]
+        # self.forces[2][3:6] = [0, 0, 50]
 
-        # --- Nested function: Allocate Translational Forces ---
-        def allocate_translational_forces():
-            # Allocate Y force: top thrusters get 25% each; bottom gets 50%
-            self.forces[0][4] += 0.25 * desired_net_force_local[1]
-            self.forces[1][4] += 0.25 * desired_net_force_local[1]
-            self.forces[2][4] += 0.5  * desired_net_force_local[1]
+        # For the Y component, we'll apply 0.25 to both of the top thrusters, and 0.5 to the bottom thruster.
+        self.forces[0][4] += 0.25 * desired_net_force_local[1]
+        self.forces[1][4] += 0.25 * desired_net_force_local[1]
+        self.forces[2][4] += 0.5 * desired_net_force_local[1]
 
-            # Allocate X force: same distribution.
-            self.forces[0][3] += 0.25 * desired_net_force_local[0]
-            self.forces[1][3] += 0.25 * desired_net_force_local[0]
-            self.forces[2][3] += 0.5  * desired_net_force_local[0]
+        # Same for the X component: 0.25 to both top thrusters, 0.5 to the bottom thruster.
+        self.forces[0][3] += 0.25 * desired_net_force_local[0]
+        self.forces[1][3] += 0.25 * desired_net_force_local[0]
+        self.forces[2][3] += 0.5 * desired_net_force_local[0]
 
-            # Allocate Z force: if positive (upward), assign to bottom; if negative (downward), split top.
-            if desired_net_force_local[2] > 0:
-                self.forces[2][5] += desired_net_force_local[2]
-            else:
-                self.forces[0][5] += 0.5 * desired_net_force_local[2]
-                self.forces[1][5] += 0.5 * desired_net_force_local[2]
+        # For the Z component, apply the full force to the bottom thruster if it's positive (pushing up), and distribute evenly to the top thrusters if it's negative (pushing down).
+        if desired_net_force_local[2] > 0:
+            self.forces[2][5] += desired_net_force_local[2]
+        else:
+            self.forces[0][5] += desired_net_force_local[2] * 0.5
+            self.forces[1][5] += desired_net_force_local[2] * 0.5
+        
+        # --- Torque allocation for rotation about Z (yaw) ---
+        # Get the individual distances from the CoM in Y for the top thrusters:
+        r0 = abs(self.forces[0][1])
+        r1 = abs(self.forces[1][1])
+        if (r0 + r1) != 0:
+            F_torque0 = -desired_net_torque_local[2] / (r0 + r1)
+            F_torque1 = desired_net_torque_local[2] / (r0 + r1)
+        else:
+            F_torque0 = 0
+            F_torque1 = 0
+        # Apply the differential X force (assuming force[?][3] is the X component) to generate yaw torque.
+        self.forces[0][3] += F_torque0  # adds force in +X at Y = +r0
+        self.forces[1][3] += F_torque1  # adds (or subtracts) force in +X at Y = -r1
+        # In the future, we could also apply a force in Y depending on the position of the thrusters.
 
-        # --- Nested function: Allocate Yaw Torque (rotation about Z) ---
-        def allocate_yaw_torque():
-            # Use the Y positions of the top thrusters to generate differential X forces.
-            r0 = abs(self.forces[0][1])
-            r1 = abs(self.forces[1][1])
-            if (r0 + r1) != 0:
-                F_torque0 = -desired_net_torque_local[2] / (r0 + r1)
-                F_torque1 = desired_net_torque_local[2] / (r0 + r1)
-            else:
-                F_torque0 = 0
-                F_torque1 = 0
-            self.forces[0][3] += F_torque0  # adds force in +X at Y = +r0
-            self.forces[1][3] += F_torque1  # adds (or subtracts) force in +X at Y = -r1
+        # --- Torque allocation for rotation about Y (pitch) ---
+        # Assume both top thrusters have the same z coordinate.
+        z_top = self.forces[0][2]
+        if z_top != 0:
+            # Total extra X force needed on top to generate the desired pitch torque:
+            A = desired_net_torque_local[1] / 4.0  # so that 4A equals desired torque
+            # Bottom thruster gets the opposite force:
+            F_torque_bottom = -A
+        else:
+            A = 0
+            F_torque_bottom = 0
 
-        # --- Nested function: Allocate Pitch Torque (rotation about Y) ---
-        def allocate_pitch_torque():
-            # Assume both top thrusters share the same Z coordinate.
-            z_top = self.forces[0][2]
-            if z_top != 0:
-                # Compute total extra X force needed on top to generate desired pitch torque.
-                A = desired_net_torque_local[1] / 4.0  # so that 4A equals the desired torque.
-                F_torque_bottom = -A  # Bottom thruster gets the opposite force.
-            else:
-                A = 0
-                F_torque_bottom = 0
+        # Get Y positions of thrusters:
+        y0 = self.forces[0][1]
+        y1 = self.forces[1][1]
+        y2 = self.forces[2][1]
 
-            # Get Y positions:
-            y0 = self.forces[0][1]
-            y1 = self.forces[1][1]
-            y2 = self.forces[2][1]
+        # Compute distances in Y from each top thruster to the bottom thruster.
+        d0 = abs(y0 - y2)
+        d1 = abs(y1 - y2)
+        # Avoid division by zero.
+        if d0 == 0:
+            d0 = 1e-6
+        if d1 == 0:
+            d1 = 1e-6
 
-            # Compute distances from each top thruster to the bottom in Y.
-            d0 = abs(y0 - y2)
-            d1 = abs(y1 - y2)
-            # Avoid division by zero.
-            if d0 == 0:
-                d0 = 1e-6
-            if d1 == 0:
-                d1 = 1e-6
+        # Compute weights inversely proportional to distance.
+        w0 = 1.0 / d0
+        w1 = 1.0 / d1
 
-            # Compute weights inversely proportional to distance.
-            w0 = 1.0 / d0
-            w1 = 1.0 / d1
+        # Normalize weights and compute the extra force for each top thruster.
+        F_torque_top_0 = A * (w0 / (w0 + w1))
+        F_torque_top_1 = A * (w1 / (w0 + w1))
 
-            # Distribute the extra X force among the top thrusters.
-            F_torque_top_0 = A * (w0 / (w0 + w1))
-            F_torque_top_1 = A * (w1 / (w0 + w1))
+        # Apply the differential forces in the X direction.
+        self.forces[0][3] += F_torque_top_0
+        self.forces[1][3] += F_torque_top_1
+        self.forces[2][3] += F_torque_bottom
 
-            # Apply the differential forces.
-            self.forces[0][3] += F_torque_top_0
-            self.forces[1][3] += F_torque_top_1
-            self.forces[2][3] += F_torque_bottom
 
-        # --- Nested function: Allocate Roll Torque (rotation about X) with Yaw Correction ---
-        def allocate_roll_torque():
-            # Compute extra Y forces for roll.
-            z_top = self.forces[0][2]
-            if z_top != 0:
-                F_torque_top_x = -desired_net_torque_local[0] / (4.0 * z_top)
-                F_torque_bot_x = -2.0 * F_torque_top_x  # Bottom gets twice as much (opposite sign).
-            else:
-                F_torque_top_x = 0
-                F_torque_bot_x = 0
+        # --- Torque allocation for rotation about X (roll) ---
+        if z_top != 0:
+            F_torque_top_x = -desired_net_torque_local[0] / (4.0 * z_top)
+            F_torque_bot_x = -2.0 * F_torque_top_x  # equals desired_net_torque_local[0] / (2.0 * z_top)
+        else:
+            F_torque_top_x = 0
+            F_torque_bot_x = 0
 
-            # Apply extra Y forces for roll.
-            self.forces[0][4] += F_torque_top_x
-            self.forces[1][4] += F_torque_top_x
-            self.forces[2][4] += F_torque_bot_x
-
-            # --- Yaw Correction for Roll due to x_off ---
-            # Unwanted yaw arises because top and bottom thrusters have different X positions.
-            x_off_val = self.forces[0][0]  # x coordinate of top thrusters.
-            # Estimate unwanted yaw moment from the roll allocation:
-            unwanted_yaw = 4.0 * x_off_val * F_torque_top_x
-            # Set a virtual desired yaw torque equal to the negative of the unwanted yaw.
-            desired_yaw_corr = -unwanted_yaw
-
-            # Use the existing yaw allocation pattern to compute corrective X forces.
-            r0 = abs(self.forces[0][1])
-            r1 = abs(self.forces[1][1])
-            if (r0 + r1) != 0:
-                F_corr0 = -desired_yaw_corr / (r0 + r1)
-                F_corr1 = desired_yaw_corr / (r0 + r1)
-            else:
-                F_corr0 = 0
-                F_corr1 = 0
-
-            # Apply the corrective X forces.
-            self.forces[0][3] += F_corr0
-            self.forces[1][3] += F_corr1
-
-        # --- Execute the nested functions in order ---
-        allocate_translational_forces()
-        allocate_yaw_torque()
-        allocate_pitch_torque()
-        allocate_roll_torque()
-
+        # Apply the extra Y forces for rotation about X:
+        self.forces[0][4] += F_torque_top_x
+        self.forces[1][4] += F_torque_top_x
+        self.forces[2][4] += F_torque_bot_x
 
     def PID(self):
         if not self.forces_enabled:
