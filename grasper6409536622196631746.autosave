@@ -269,12 +269,12 @@ class Box:
         # Goal box
         self.goal_pos = self.box_pos[:]
         self.goal_rot = [0, 0, 0]
-        self.goal_dims = [dim * 1.1 for dim in self.box_dims]
+        self.goal_dims = [dim * 1.25 for dim in self.box_dims]
         self.goal_vel = 20
         self.goal_avel = PI/2
 
         # PID control for positions
-        self.Kpp = 40
+        self.Kpp = 25
         self.Kip = 1
         self.Kdp = 10
         self.Kpr = 40
@@ -388,7 +388,7 @@ class Box:
         rotateY(self.goal_rot[1])
         rotateX(self.goal_rot[0])
         draw_reference_frame()
-        fill(0, 0, 0, 0)  # Green color with transparency
+        fill(0, 255, 0, 31)  # Green color with transparency
         box(self.goal_dims[0], self.goal_dims[1], self.goal_dims[2])
         popMatrix()
 
@@ -774,6 +774,7 @@ def draw():
     for i, arm in enumerate(arms):
         arm.draw()
         # ghost_arms[i].draw()
+        pass
 
 # Control
 def control():
