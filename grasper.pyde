@@ -305,6 +305,10 @@ class Box:
             [0-x_off, 0-y_off, -self.box_dims[2]/2, 0, 0, 0]
         ]
 
+    @property
+    def wrapped_rot(self):
+        return [ ((angle + PI) % (2 * PI)) - PI for angle in self.box_rot ]
+
     # Dynamics
     def update_box_dynamics(self):
         self.update_net_force()
@@ -397,7 +401,7 @@ class Box:
         rotateY(self.goal_rot[1])
         rotateX(self.goal_rot[0])
         draw_reference_frame()
-        fill(0, 0, 0, 0)  # Green color with transparency
+        noFill()
         box(self.goal_dims[0], self.goal_dims[1], self.goal_dims[2])
         popMatrix()
 
@@ -563,7 +567,6 @@ class Box:
         self.forces[2][4] += grasp_bot * d_unit[1]
         self.forces[2][5] += grasp_bot * d_unit[2]
 
-
     def PID(self):
         if not self.forces_enabled:
             # reset PID variables
@@ -586,12 +589,12 @@ class Box:
         
         # Rotation PID: use difference in measurement (box_rot) for the derivative
         for i in range(3):
-            error = self.goal_rot[i] - self.box_rot[i]
+            error = self.goal_rot[i] - self.wrapped_rot[i]
             self.error_sum[i+3] += error * dt
-            measurement_derivative = -(self.box_rot[i] - self.prev_measurement_rot[i]) / dt if dt != 0 else 0
+            measurement_derivative = -(self.wrapped_rot[i] - self.prev_measurement_rot[i]) / dt if dt != 0 else 0
             output = (self.Kpr * error + self.Kir * self.error_sum[i+3] + self.Kdr * measurement_derivative) * self.box_moment[i]
             pid_torque[i] = output
-            self.prev_measurement_rot[i] = self.box_rot[i]
+            self.prev_measurement_rot[i] = self.wrapped_rot[i]
         
         return pid_force, pid_torque
 
@@ -689,11 +692,15 @@ arms = [
     Manipulator([0, -4.5, 10], [0, 0, 0], end_effector_radius),
     Manipulator([0, 0, -10], [PI, 0, 0], end_effector_radius),
 ]
+arms[0].links[0]["theta"] = PI/9
+arms[1].links[0]["theta"] = -PI/9
 ghost_arms = [Manipulator(m.pos, m.rot, end_effector_radius) for m in arms]
 start_angle = [None for _ in ghost_arms]
 start_pos = [None for _ in ghost_arms]
+box_is_reachable = True
 
 # Box
+backup_box = None
 box_limits_pos = [[4, 12], [-6, 6], [-6, 6]]
 box_limits_rot = [[-PI/4, PI/4], [-PI/4, PI/4], [-PI/4, PI/4]]
 box_obj = Box([10, 0, 0], [0, 0, 0])
@@ -705,10 +712,13 @@ contact_points = [
 
 # Main functions
 def record_starting_conditions():
+    global backup_box
+    # Record the start position of the box
+    backup_box = Box(box_obj.box_pos[:], box_obj.box_rot[:])
+
     # Record the end effector positions of the arms
     for i, arm in enumerate(arms):
         start_pos[i] = arm.get_end_effector_global_position()
-        print("Arm", i, "start position:", start_pos[i])
 
     # Record the starting angles of the ghost arms
     for i, ghost_arm in enumerate(ghost_arms):
@@ -751,20 +761,24 @@ def set_up_drawing():
 def setup():
     global zoom, start_angle
 
+    monoFont = createFont("Courier New", 16)
+    textFont(monoFont)
+
     # Option 1
-    # fullScreen(P3D)
-    # zoom = 20.0
+    fullScreen(P3D)
+    zoom = 18
 
     # Option 2
-    size(800, 800, P3D)
-    zoom = 12.5
+    # size(800, 800, P3D)
+    # zoom = 12.5
 
     record_starting_conditions()
 
 def draw():
     global start_angle
+    pushMatrix()
     set_up_drawing()
-    
+
     # Handle user input (goal position and rotation)
     control()
 
@@ -778,17 +792,25 @@ def draw():
     # Draw the arms
     for i, arm in enumerate(arms):
         arm.draw()
-        # ghost_arms[i].draw()
+    popMatrix()
+
+    display_hud()
+
 
 # Control
 def move_arms():
+    global box_is_reachable
     rolled_contact_points = [get_rolled_contact_point(i) for i in range(len(arms))]
 
     # Determine if all arms can reach the goal.
     box_is_reachable = all([arm.is_reachable(box_obj.local_to_global_box(rolled_contact_points[i])) for i, arm in enumerate(arms)])
+    
+    # Ensure the box's rotation doesn't exceed 90 on any axis
+    box_is_grabbable = all(abs(angle) <= PI/3 for angle in box_obj.wrapped_rot)
+
+    box_is_reachable = box_is_reachable and box_is_grabbable
 
     if not box_is_reachable:
-        print("At least one arm cannot reach the target.")
         actuate_gripper(-1)
 
     # Move the arms to the contact points
@@ -799,7 +821,6 @@ def move_arms():
         extrapolated_goal = extrapolate_smooth(start_pos[i], contact_point, contact)
         arm.global_goal = extrapolated_goal
         arm.move_to_goal()
-
 
 def control():
     control_goal()
@@ -865,6 +886,12 @@ def generic_control(lin_mag, rot_mag, lin_vals, rot_vals):
 
         actuate_gripper((1 if key == 'c' else -1 if key == 'v' else 0))
 
+        if key == 'r':
+            box_obj.box_pos = backup_box.box_pos[:]
+            box_obj.box_rot = backup_box.box_rot[:]
+            box_obj.box_vel = [0, 0, 0]
+            box_obj.box_avel = [0, 0, 0]
+
 def actuate_gripper(speed):
     global contact
     contact = max(min(contact + speed * dt, 1), 0)
@@ -878,6 +905,41 @@ def mouseDragged():
     angleX -= (mouseY - pmouseY) * 0.01
 
 # Drawing
+def display_hud():
+    instructions = [
+        "INSTRUCTIONS:",
+        "Use the WASDZX keys for translation",
+        "Use the ARROW_KEYS + ',' and '.' for rotation",
+        "HOLD 'c' or 'v' to open/close the gripper",
+        "Press 'r' to reset the box",
+        "Drag the mouse to rotate the view",
+    ]
+    font_size = 24
+    margin = 20  # pixels from the borders
+    line_spacing = font_size * 1.2  # pixels between lines
+    for i, line in enumerate(instructions[::-1]):
+        y_pos = height - margin - i * line_spacing
+        display_text(line, font_size, margin / float(width), y_pos / float(height), (0, 0, 0), h_align=LEFT, v_align=BOTTOM)
+
+    # Credits
+    credits = [
+        u"TE3001B.101 - Equipo 4 Matutino",
+        u"Samuel Cabrera         | A00838072",
+        u"Jose Luis Urquieta     | A00835580",
+        u"Felipe de Jesús García | A01705893",
+        u"Uriel Ernesto Lemus    | A00835767",
+        u"Santiago Lopez         | A01235819",
+    ]
+
+    for i, line in enumerate(credits):
+        y_pos = margin + i * line_spacing
+        display_text(line, font_size, margin / float(width), y_pos / float(height), (0, 0, 0), h_align=LEFT, v_align=TOP)
+
+    # Show whether the box is reachable
+    if not box_is_reachable:
+        display_text("Box is unreachable.", 32, 0.5, 0.475, (255, 0, 0))
+        display_text("Press 'r' to reset.", 32, 0.5, 0.525, (255, 0, 0))
+
 def draw_cylinder(radius, height, sides=24):
     strokeWeight(0)
     angle = TWO_PI / sides
@@ -941,6 +1003,20 @@ def draw_reference_frame():
     stroke(0, 0, 255)  # z-axis (blue)
     line(0, 0, 0, 0, 0, axis_length)
     stroke(0)
+
+def display_text(msg, font_size, x_frac, y_frac, col=(255, 255, 255), h_align=CENTER, v_align=CENTER):
+    textSize(font_size)
+    textAlign(h_align, v_align)
+    
+    # Calculate actual pixel positions from fractions
+    x = width * x_frac
+    y = height * y_frac
+    
+    # Disable depth testing to ensure the text appears over the 3D graphics
+    hint(DISABLE_DEPTH_TEST)
+    fill(*col)
+    text(msg, x, y)
+    hint(ENABLE_DEPTH_TEST)
 
 # Math
 def extrapolate_smooth(pointA, pointB, t):
