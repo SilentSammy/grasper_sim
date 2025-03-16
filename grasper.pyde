@@ -1,9 +1,12 @@
 import math
 
 class Manipulator:
+    instance_count = 0  # Class variable to track number of instances
     shape_scale = 2
 
     def __init__(self, pos, rot, end_effector_radius=0):
+        self.id = Manipulator.instance_count
+        Manipulator.instance_count += 1
         self.end_effector_radius = end_effector_radius
         self.pos = pos
         self.rot = rot
@@ -151,11 +154,17 @@ class Manipulator:
         heading = Manipulator.goal_heading(self.local_goal)
         self.links[0]["theta"] = heading
         pos2D = Manipulator.get_flat_pos(heading, self.local_goal)
-        theta1, theta2 = self.inverse_kinematics(pos2D)
-        if theta1 is not None and theta2 is not None:
+        ik_result = self.inverse_kinematics(pos2D)
+        if ik_result != False:
+            theta1, theta2 = ik_result
             self.links[1]["theta"] = theta1
             self.links[2]["theta"] = theta2
-        pass
+
+    def is_reachable(self, global_goal):
+        local_goal = Manipulator.global_to_local(global_goal, self.pos, self.rot[0])
+        heading = Manipulator.goal_heading(local_goal)
+        pos2D = Manipulator.get_flat_pos(heading, local_goal)
+        return self.inverse_kinematics(pos2D) != False
 
     def inverse_kinematics(self, pos2D):
         # Inputs: link lengths from kinematics (assumed positive)
@@ -171,21 +180,21 @@ class Manipulator:
         
         # Check reachability
         if dist_sq > (l1 + l2)**2:
-            # println("Target unreachable")
-            return None, None
-        
-        # Compute angle at elbow
-        cos_theta2 = (dist_sq - l1*l1 - l2*l2) / (2 * l1 * l2)
-        # Clamp to avoid floating point errors outside [-1,1]
-        cos_theta2 = max(-1, min(1, cos_theta2))
-        theta2 = acos(cos_theta2)
-        
-        # For elbow-up solution:
-        k1 = l1 + l2 * cos(theta2)
-        k2 = l2 * sin(theta2)
-        theta1 = atan2(y, x) - atan2(k2, k1)
-        
-        return theta1, theta2
+            # print("Target unreachable", self.id)
+            return False
+        else:
+            # Compute angle at elbow
+            cos_theta2 = (dist_sq - l1*l1 - l2*l2) / (2 * l1 * l2)
+            # Clamp to avoid floating point errors outside [-1,1]
+            cos_theta2 = max(-1, min(1, cos_theta2))
+            theta2 = acos(cos_theta2)
+            
+            # For elbow-up solution:
+            k1 = l1 + l2 * cos(theta2)
+            k2 = l2 * sin(theta2)
+            theta1 = atan2(y, x) - atan2(k2, k1)
+            
+            return theta1, theta2
     
     @staticmethod
     def apply_transformations(link, transform=None):
@@ -672,10 +681,9 @@ zoom = 20.0
 angleX = 0
 angleY = 0
 
-# Objects
+# Arms
 contact = 1
 end_effector_radius = 2
-
 arms = [
     Manipulator([0, 4.5, 10], [0, 0, 0], end_effector_radius),
     Manipulator([0, -4.5, 10], [0, 0, 0], end_effector_radius),
@@ -685,6 +693,9 @@ ghost_arms = [Manipulator(m.pos, m.rot, end_effector_radius) for m in arms]
 start_angle = [None for _ in ghost_arms]
 start_pos = [None for _ in ghost_arms]
 
+# Box
+box_limits_pos = [[4, 12], [-6, 6], [-6, 6]]
+box_limits_rot = [[-PI/4, PI/4], [-PI/4, PI/4], [-PI/4, PI/4]]
 box_obj = Box([10, 0, 0], [0, 0, 0])
 contact_points = [
     [0, 5, box_obj.box_dims[2]/2 + end_effector_radius],
@@ -756,15 +767,9 @@ def draw():
     
     # Handle user input (goal position and rotation)
     control()
-    
-    # Set up arms
-    for i, arm in enumerate(arms):
-        contact_point = get_rolled_contact_point(i)
-        box_obj.forces[i][0:2] = [contact_point[0], contact_point[1]]
-        contact_point = box_obj.local_to_global_box(contact_point)
-        extrapolated_goal = extrapolate_smooth(start_pos[i], contact_point, contact)
-        arm.global_goal = extrapolated_goal
-        arm.move_to_goal()
+
+    # Move arms
+    move_arms()
     
     # Draw the box
     box_obj.draw_box(True)
@@ -776,6 +781,26 @@ def draw():
         # ghost_arms[i].draw()
 
 # Control
+def move_arms():
+    rolled_contact_points = [get_rolled_contact_point(i) for i in range(len(arms))]
+
+    # Determine if all arms can reach the goal.
+    box_is_reachable = all([arm.is_reachable(box_obj.local_to_global_box(rolled_contact_points[i])) for i, arm in enumerate(arms)])
+
+    if not box_is_reachable:
+        print("At least one arm cannot reach the target.")
+        actuate_gripper(-1)
+
+    # Move the arms to the contact points
+    for i, arm in enumerate(arms):
+        contact_point = rolled_contact_points[i]
+        box_obj.forces[i][0:2] = [contact_point[0], contact_point[1]]
+        contact_point = box_obj.local_to_global_box(contact_point)
+        extrapolated_goal = extrapolate_smooth(start_pos[i], contact_point, contact)
+        arm.global_goal = extrapolated_goal
+        arm.move_to_goal()
+
+
 def control():
     control_goal()
     # control_box()
@@ -817,17 +842,12 @@ def control_goal():
     goal_avel = PI/2
     
     generic_control(goal_vel*dt, goal_avel*dt, box_obj.goal_pos, box_obj.goal_rot)
-    
-    if False:  # Optional: limit the goal position and rotation
-        # Limit the goal position to a certain range
-        box_obj.goal_pos[0]=max(min(15, box_obj.goal_pos[0]),10)
-        box_obj.goal_pos[1]=max(min(3, box_obj.goal_pos[1]),-3)
-        box_obj.goal_pos[2]=max(min(2, box_obj.goal_pos[2]),-2)
-        
-        # Limit the goal rotation to a certain range
-        box_obj.goal_rot[0]=max(min(0.2, box_obj.goal_rot[0]), -0.2)
-        box_obj.goal_rot[1]=max(min(0.2, box_obj.goal_rot[1]), -0.2)
-        box_obj.goal_rot[2]=max(min(0.2, box_obj.goal_rot[2]), -0.2)
+    print("Goal position:", [round(coord, 1) for coord in box_obj.goal_pos], "Goal rotation:", [round(angle, 1) for angle in box_obj.goal_rot])
+
+        # Limit the goal position and rotation:
+    for i in range(3):
+        box_obj.goal_pos[i] = max(min(box_limits_pos[i][1], box_obj.goal_pos[i]), box_limits_pos[i][0])
+        box_obj.goal_rot[i] = max(min(box_limits_rot[i][1], box_obj.goal_rot[i]), box_limits_rot[i][0])
 
     box_obj.thrust_to_goal()  # Apply PID control to reach the goal
     box_obj.update_box_dynamics()  # Update force, accel, vel and pos, both linear and angular
@@ -843,8 +863,12 @@ def generic_control(lin_mag, rot_mag, lin_vals, rot_vals):
         rot_vals[1] += (-1 if key == CODED and keyCode == UP else 1 if key == CODED and keyCode == DOWN else 0) * rot_mag
         rot_vals[2] += (-1 if key == ',' else 1 if key == '.' else 0) * rot_mag
 
-        contact = max(min(contact + (1 if key == 'c' else -1 if key == 'v' else 0) * 1*dt, 1), 0)
-        box_obj.forces_enabled = contact == 1
+        actuate_gripper((1 if key == 'c' else -1 if key == 'v' else 0))
+
+def actuate_gripper(speed):
+    global contact
+    contact = max(min(contact + speed * dt, 1), 0)
+    box_obj.forces_enabled = (contact == 1)
 
 def mouseDragged():
     global angleX, angleY
