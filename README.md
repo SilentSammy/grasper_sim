@@ -18,6 +18,10 @@ Para ejecutar este sketch de Processing, se deben seguir los siguientes pasos:
 4. **Disfruta!**
    - Tratamos de que el uso de la simulación fuera intuitivo y sencillo. Hay instrucciones en pantalla para su uso.
 
+## Video Demostrativo
+Puedes ver una demostración del proyecto en el siguiente video:
+[![Ver en YouTube](https://img.youtube.com/vi/4BDwMvbFZvo/0.jpg)](https://youtu.be/4BDwMvbFZvo)
+
 ## Créditos
 El proyecto fue desarrollado por el equipo 4 Matutino:
 
